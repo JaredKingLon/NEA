@@ -13,3 +13,7 @@ button
   width: auto;
   padding: 6px 12px;
 }
+
+section{
+  align-items: center; /*Otherwise everything was on the left, didnt look nice */
+}
