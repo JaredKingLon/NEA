@@ -15,5 +15,7 @@ button
 }
 
 section{
+display:flex;
+flex-direction:column;
   align-items: center; /*Otherwise everything was on the left, didnt look nice */
 }
