@@ -2,3 +2,9 @@ body {
   background-color: LavenderBlush;
   font-family:"OCR A Std",monospace; /*I really like this font but apparently It isn't installed on most computers, */
      }  
+input,button{
+       width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      box-sizing: border-box;
+}
