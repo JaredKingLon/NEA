@@ -1394,7 +1394,10 @@
 
         /*The player must be a Sprite (rather than a Rectangle) because Phaser sprites have an animation controller.*/
         // Start on a walk-sheet frame so the scale matches the 625x400 animation frames.
-        playabody = this.add.sprite(gameWidth / 2, gameHeight / 2, "walkingrightspritesheet", 0);
+        const spawnMargin = 50;
+        const spawnX = Phaser.Math.Between(spawnMargin, tableWidth - spawnMargin);
+        const spawnY = Phaser.Math.Between(spawnMargin, tableHeight - spawnMargin);
+        playabody = this.add.sprite(spawnX, spawnY, "walkingrightspritesheet", 0);
         playabody.setScale(0.2); // about 125x80 on screen
         playabody.setDepth(1);
         this.physics.add.existing(playabody);
@@ -1463,7 +1466,7 @@
         topHead.setDepth(2);
         this.physics.add.existing(topHead);
 
-        swordSprite = this.add.image(gameWidth / 2, gameHeight / 2, "swordpng");
+        swordSprite = this.add.image(spawnX, spawnY, "swordpng");
         swordSprite.setScale(2);
         swordSprite.setDepth(2);
 
