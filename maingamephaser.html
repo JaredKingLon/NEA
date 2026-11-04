@@ -1,0 +1,1908 @@
+    <!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Phaser Game Template</title>
+        <style>
+            html,
+            body {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+        }
+
+        body {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 320px;
+            overflow: hidden;
+        }
+
+        #game-shell {
+            position: relative;
+            height: 100vh;
+            min-width: 0;
+            overflow: hidden;
+        }
+
+        #leaderboard {
+                display: flex;
+                flex-direction: column;
+            gap: 12px;
+            padding: 14px;
+            box-sizing: border-box;
+            border-left: 2px solid rgba(0, 0, 0, 0.12);
+            background: rgba(255, 255, 255, 0.25);
+            overflow-y: auto;
+        }
+
+        #timer-hud {
+            position: absolute;
+            left: 16px;
+            top: 16px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            border: 2px solid rgba(0, 0, 0, 0.22);
+            background: rgba(168, 210, 240, 0.92);
+            color: #1b1b1b;
+            font-size: 1.1rem;
+            font-weight: 700;
+            z-index: 12;
+        }
+
+        #player-score-hud {
+            position: absolute;
+            right: 16px;
+            bottom: 16px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            border: 2px solid rgba(0, 0, 0, 0.22);
+            background: rgba(240, 237, 168, 0.92);
+            color: #1b1b1b;
+            font-size: 1.1rem;
+            font-weight: 700;
+            z-index: 12;
+        }
+
+        #respawn-hud {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 2px solid rgba(0, 0, 0, 0.22);
+            background: rgba(255, 255, 255, 0.92);
+            color: #1b1b1b;
+            font-size: 1.2rem;
+            font-weight: 700;
+            z-index: 12;
+        }
+
+        #leaderboard h2 {
+            margin: 0;
+            text-align: center;
+            }
+
+        #leaderboard #scorebox {
+            width: 100%;
+        }
+
+        #local-player-score {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: 260px;
+            box-sizing: border-box;
+            padding: 10px 14px;
+            border: 2px solid rgba(0, 0, 0, 0.22);
+            border-radius: 12px;
+            background: rgba(255, 255, 0, 0.85);
+            color: #1b1b1b;
+            z-index: 30;
+            pointer-events: none;
+        }
+
+            #game-container {
+            width: 100%;
+            height: 100%;
+            min-width: 0;
+            overflow: hidden;
+            }
+
+        @media (max-width: 900px) {
+            body {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr 36vh;
+            }
+
+            #leaderboard {
+            border-left: none;
+            border-top: 2px solid rgba(0, 0, 0, 0.12);
+            }
+
+            #game-container {
+            height: 100%;
+            }
+
+            #player-score-hud {
+            right: 12px;
+            bottom: 12px;
+            }
+        }
+        </style>
+    </head>
+    <body>
+        <main id="game-shell">
+        <div id="game-container"></div>
+        <div id="timer-hud">Time: <span id="timer-value">10</span>s</div>
+        <div id="player-score-hud">Score: <span id="player-score-value">0</span></div>
+        <div id="respawn-hud" style="display: none;">Respawning in <span id="respawn-value">3</span></div>
+        <div id="local-player-score" style="display: none;"></div>
+        </main>
+        <aside id="leaderboard">
+        <h2>Leaderboard</h2>
+        <section id="scorebox"></section>
+        </aside>
+
+        <!-- Loads the Socket.IO client used for live multiplayer updates. -->
+        <script src="/socket.io/socket.io.js"></script>
+        
+        <!-- Connects this page to the multiplayer server. -->
+        <script>
+        // Open one live connection for this browser tab.
+        const socket = typeof io === 'function'
+            ? io({ transports: ["websocket", "polling"] })
+            : { connected: false, on() {}, emit() {} };
+        window.socket = socket;
+
+        // name and tutor chosen on the index page, sent to the server so other players know who this is
+        const params = new URLSearchParams(window.location.search);
+        const myName = params.get('playerName') || localStorage.getItem('playerName');
+        const myTutor = params.get('playerTutor') || localStorage.getItem('playerTutor');
+
+        // Every other player in the game: socket id -> { id, name, tutor, x, y }. The game scene draws these each frame.
+        window.remotePlayerData = {};
+
+        // runs on the first connection and on every reconnection, because the server forgets us when we disconnect
+        socket.on("connect", () => {
+            console.log("Socket connected:", socket.id);
+            window.remotePlayerData = {};
+            socket.emit("join", { name: myName, tutor: myTutor });
+        });
+
+        socket.on("connect_error", (error) => {
+            console.error("Socket connection error:", error.message);
+        });
+
+        // Initial sync: receive every player already connected (this includes ourselves, so skip our own id).
+        socket.on("currentPlayers", (players) => {
+            Object.values(players).forEach((other) => {
+                if (other.id !== socket.id) {
+                    window.remotePlayerData[other.id] = other;
+                }
+            });
+        });
+
+        // Live update: add a player who joins after this tab connected.
+        socket.on("newPlayer", (other) => {
+            window.remotePlayerData[other.id] = other;
+        });
+
+        // Live update: store the new position, the scene moves the matching remote player on screen.
+        socket.on("playerMoved", (data) => {
+            const other = window.remotePlayerData[data.id];
+            if (other) {
+                Object.assign(other, data); // position, aim, health and status
+            }
+        });
+
+        // Live update: remove the player who left the game.
+        socket.on("playerDisconnected", (playerId) => {
+            delete window.remotePlayerData[playerId];
+        });
+
+        </script>
+
+        <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+        const supabaseUrl = 'https://nelcsssoxnlbfrjqvvnp.supabase.co';
+        const supabaseKey = 'sb_publishable_rFSukQnhifkKajWx8iHFdg_fj3cAC8C';
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        
+        const playerNameFromUrl = new URLSearchParams(window.location.search).get('playerName');
+        /*getting the name from when they entered it in the index box I have to use it*/
+        const currentPlayerName = playerNameFromUrl || localStorage.getItem('playerName');
+        if (playerNameFromUrl) {
+            localStorage.setItem('playerName', playerNameFromUrl);
+        }
+        // the tutor is needed as well, because two players can share a name if their tutors differ
+        const playerTutorFromUrl = new URLSearchParams(window.location.search).get('playerTutor');
+        const currentPlayerTutor = playerTutorFromUrl || localStorage.getItem('playerTutor');
+        if (playerTutorFromUrl) {
+            localStorage.setItem('playerTutor', playerTutorFromUrl);
+        }
+        
+        // ============================================================================
+        // EXPOSE SUPABASE AND PLAYER NAME TO WINDOW (for Socket.IO script access)
+        // ============================================================================
+        // These variables are defined in this script tag but need to be accessible
+        // from the earlier Socket.IO script tag that runs first
+        // By assigning them to window, they become global and available everywhere
+        // This allows the increaseTableScore() function to access Supabase and playerName
+        window.supabase = supabase;
+        window.currentPlayerName = currentPlayerName;
+        
+        const scoreBox = document.querySelector('#scorebox');
+        const localPlayerScore = document.querySelector('#local-player-score');
+        const playerScoreValue = document.querySelector('#player-score-value');
+        const timerValue = document.querySelector('#timer-value');
+
+        async function fetchScores() {
+            const { data, error } = await supabase
+            .from('NamesAndScores')
+            .select('*')
+            .order('Score', { ascending: false }); /*get everything from the table and make it so highest score at top*/
+
+            if (error) {
+            console.error('Error fetching scores:', error);
+            return;
+            }
+
+            scoreBox.innerHTML = ''; /*clears the box so that it doesn't keep adding the same scores over and over again, it clears it and then adds the new ones*/
+
+            data.slice(0, 10).forEach((entry) => { /*show only the ten highest scores*/
+            const scoreDiv = document.createElement('div');
+            scoreDiv.className = 'score-entry';
+            scoreDiv.dataset.player = entry.Names;
+            scoreDiv.innerHTML =
+            `
+                <div class="score-entry-content">
+                <p class="score-name">Name: ${entry.Names}</p>
+                <p class="score-value">Score: ${entry.Score}</p>
+                </div>
+            `;
+            scoreBox.appendChild(scoreDiv);
+            });
+
+            // Find the local player in the full result, even if they are outside the top ten.
+            const currentPlayer = data.find((entry) => entry.Names === currentPlayerName && entry.Tutor === currentPlayerTutor);
+            if (currentPlayer) {
+            // Update the independent overlay without changing the leaderboard rows.
+            localPlayerScore.innerHTML = `
+                <p class="score-name">Name: ${currentPlayer.Names}</p>
+                <p class="score-value">Score: ${currentPlayer.Score}</p>
+            `;
+            // Keep the local player's card visible above the leaderboard.
+            localPlayerScore.style.display = 'block';
+            }
+        }
+
+        async function increaseTableScoreByAmount(playerName, playerTutor, amount) {
+            if (!playerName) {/*if no name then it wont do anything*/
+            return;
+            }
+
+            const { data: playerRow, error: readError } = await supabase 
+            .from('NamesAndScores')
+            .select('Score')
+            .eq('Names', playerName)
+            .eq('Tutor', playerTutor) /*searches for that 1 entry that has the name of the player whos score is increasing and gets the score from it*/
+            .single(); /*only takes that one*/
+
+            if (readError && readError.code !== 'PGRST116') { /*if theres an error and its not the error for no row found*/
+            return;
+            }
+
+            const currentScore = Number(playerRow?.Score) || 0;
+            const updatedScore = currentScore + amount;
+
+            if (playerRow) { /*if it finds that record*/
+            const { error: updateError } = await supabase
+                .from('NamesAndScores')
+                .update({ Score: updatedScore }) /*make the score the new one*/
+                .eq('Names', playerName)
+                .eq('Tutor', playerTutor);
+
+            if (updateError) { /*all the other errors*/
+                return;
+            }
+            } else {
+            const { error: insertError } = await supabase
+                .from('NamesAndScores')
+                .insert([{ Names: playerName, Tutor: playerTutor, Score: updatedScore }]);
+
+            if (insertError) {
+                return;
+            }
+            }
+
+            fetchScores(); /*gets the scores again so now we have the actual score*/
+        }
+
+        function watchScoreTable() { /*any change to the table will refresh leaderboard*/
+            supabase
+            .channel('score-table-changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'NamesAndScores' },/*any event*/
+                () => {
+                fetchScores(); /*refreshes the leaderboard whenever there's a change in the table*/
+                }
+            )
+            .subscribe();
+        }
+
+        window.increaseTableScore = (amount) => increaseTableScoreByAmount(currentPlayerName, currentPlayerTutor, amount); /*put it outside the function so the html elements can see it and use it*/
+
+        fetchScores();
+        watchScoreTable();
+        </script>
+
+        <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+
+        <script>
+        const gameContainer = document.getElementById('game-container'); /*setting the game dimensions to use them for other stuff*/
+        const timerDisplay = document.getElementById('timer-value');
+        const gameWidth = Math.max(gameContainer.clientWidth, 320);
+        const gameHeight = Math.max(gameContainer.clientHeight, 320);
+
+
+        const tableWidth = 2 * gameWidth; /*dimensions of the real table, 2x5, so i wanted each segment to be same as the game window*/
+        const tableHeight = gameHeight * 5;
+
+
+        class Player /*doing OOP for the player because its easier to do the upgrades like this*/
+        {
+        constructor(username, health, playerspeed,body){
+            this.username = username;
+            this.health = health;
+            this.playerspeed = playerspeed;
+            this.body = body;
+            this.physicsBody = body.body;
+            this.maxHealth = health;
+            this.healthBar = null;
+            this.healthBarColor = 0x22cc55;
+            this.dashBoost = 700;
+            this.dashDuration = 150;
+            this.dashCooldown = 3000;
+            this.lastDashTime = -Infinity;
+            this.dashEndTime = 0;
+            this.isDead = false;
+            this.respawnAt = 0;
+            this.hasInvincibility = false;
+            this.isInvincible = false;
+            this.invincibilityCooldown = 10000; // 10 seconds between activations
+            this.lastInvincibilityTime = -Infinity;
+            this.invincibilityDuration = 3000; // invincibility lasts 3 seconds
+            this.invincibilityEndTime = 0;
+            this.hasSuperSpeed = false;
+            this.superSpeedEndTime = 0;
+            this.superSpeedCooldown = 5000; // 5 seconds between activations
+            this.lastSuperSpeedTime = -Infinity;
+            this.hasBomb = false;
+            this.bombCooldown = 5000; // 5 seconds between bombs
+            this.lastBombTime = -Infinity; // start at -infinity bc no bombs would have been placed yet
+            this.bombDamage = 50;
+            this.hasTrackingBullet = false;
+            this.trackingCooldown = 5000; // 5 seconds between tracking bullets
+            this.lastTrackingTime = -Infinity;
+        
+        }
+
+        toggleInvincibility(currentTime) {
+            if (!this.hasInvincibility || this.isDead || !this.physicsBody) { // error checks, checks if already invincible or dead
+                return; // do nothing if anything above is true
+            }
+
+            if (!this.isInvincible) { // cooldown needs to be over to turn ON, but it can be turned off whenever
+                if (currentTime - this.lastInvincibilityTime < this.invincibilityCooldown) { // if cooldown is over
+                    return; // lastInvincibilityTime is only changed when the player is made invincible, so this check doesnt affect the cooldown
+                }
+                this.lastInvincibilityTime = currentTime; // cooldown
+                this.invincibilityEndTime = currentTime + this.invincibilityDuration;
+            }
+
+            this.isInvincible = !this.isInvincible; // toggle invincibility state, because I will be using this method to both turn on and off invincibility
+            this.physicsBody.checkCollision.none = this.isInvincible; // turn off or on collisions depending on if invincible or not
+        }
+
+        activateSuperSpeed(currentTime) {
+            if (!this.hasSuperSpeed || this.isDead) { // error check everything
+                return;
+            }
+
+            if (currentTime - this.lastSuperSpeedTime < this.superSpeedCooldown) { // still on cooldown
+                return;
+            }
+
+            this.lastSuperSpeedTime = currentTime; // cooldown starts now
+            this.superSpeedEndTime = currentTime + 3000; // says super speed should end in 3 seconds
+        }
+
+        placeBomb(gameScene, bombsGroup) { // bombsGroup is all the bombs, have to code them a bit different to normal bullets
+            if (!this.hasBomb || this.isDead || gameScene.time.now - this.lastBombTime < this.bombCooldown) { // still on cooldown
+                // error checking too
+                return;
+            }
+
+            this.lastBombTime = gameScene.time.now; // cooldown starts now
+            const bomb = new Bomb(gameScene, this.body.x, this.body.y, this); // place it on the user's position
+            bombsGroup.add(bomb); // make the bomb sprite part of bomb group 
+        }
+
+        fireTrackingBullet(gameScene, bulletsGroup, enemies) {
+            if (!this.hasTrackingBullet || this.isDead || gameScene.time.now - this.lastTrackingTime < this.trackingCooldown) { // still on cooldown
+                return;
+            }
+
+            this.lastTrackingTime = gameScene.time.now; // cooldown starts now
+            const bullet = new Bullet(gameScene, this.body.x, this.body.y, 8, false, 250, this);
+            bullet.setTint(0x00ffff); // different colour so it looks special
+            bullet.isTracking = true;
+            bulletsGroup.add(bullet);
+            const target = bullet.findNearestEnemy(enemies);
+            let angle = 0; // fire to the right if there is no enemy
+            if (target) { // if theres a target, 
+                angle = Phaser.Math.Angle.Between(bullet.x, bullet.y, target.body.x, target.body.y); // calculate angle to that enemy
+            }
+            bullet.fire(angle); // shoot that bullet at that angle
+            gameScene.time.delayedCall(3000, () => { // checks this aafter 3 seconds
+                if (bullet.active) { // if active, because if the bullet hits an enemy its already destroyed
+                    bullet.destroy(); // destroy the bullet
+                }
+            });
+        }
+
+        getMovementSpeed(currentTime) 
+        {
+ 
+            if (currentTime < this.superSpeedEndTime) { // if current time is less than the time the super speed should end
+   
+                return this.playerspeed * 2; // return double the speed, will be passed into the movement method
+                                                    } 
+            else {
+              return this.playerspeed; // do nothing if player shouldnt have super speed at that time
+                 }
+        }
+
+        createHealthBar(gameScene, color = this.healthBarColor) {
+            this.healthBar = gameScene.add.graphics();
+            this.healthBar.setDepth(10);
+            this.healthBarColor = color;
+            this.updateHealthBar();
+        }
+
+        updateHealthBar() {
+            if (!this.healthBar) {
+                return;
+            }
+
+            const width = 100;
+            const height = 8;
+            const x = this.body.x - width / 2;
+            const y = this.body.y - this.body.displayHeight / 2 - 18;
+            const healthRatio = Phaser.Math.Clamp(this.health / this.maxHealth, 0, 1);
+
+            this.healthBar.clear();
+            this.healthBar.fillStyle(0x111111, 1);
+            this.healthBar.fillRect(x, y, width, height);
+            this.healthBar.fillStyle(this.healthBarColor, 1);
+            this.healthBar.fillRect(x + 2, y + 2, (width - 4) * healthRatio, height - 4);
+            this.healthBar.setVisible(this.body.visible && !this.isDead);
+        }
+
+        attachTopToBody(head, offsetY = 0) { /*attach the top part of the player to the body because I made the sprite separate for the aiming*/
+            head.x = this.body.x;
+            head.y = this.body.y + offsetY;
+            this.updateHealthBar();
+        }
+
+        pointTopToCursor(head, cursor, worldWidth, worldHeight) { /*this is the aiming part*/
+            const targetX = Phaser.Math.Clamp(cursor.worldX, 0, worldWidth);
+            const targetY = Phaser.Math.Clamp(cursor.worldY, 0, worldHeight);
+            const angle = Phaser.Math.Angle.Between(head.x, head.y, targetX, targetY);
+            head.rotation = angle + Phaser.Math.DegToRad(90);
+            return angle;
+        }
+
+        dash(directionAngle, currentTime) {
+            if (!this.physicsBody) { // if the body doesnt exist, always just checking if something goes wrong, maybe dead 
+            return;
+            }
+
+            if (currentTime - this.lastDashTime < this.dashCooldown) { // basically if on cooldown
+            return;
+            }
+
+            this.lastDashTime = currentTime; // making it so that the cooldown starts now
+            this.dashEndTime = currentTime + this.dashDuration; // set the time when the dash will end, I want to add an upgrade to increase this later
+
+            const boostX = Math.cos(directionAngle) * this.dashBoost; // also wanted to do this to maybe add upgrade
+            const boostY = Math.sin(directionAngle) * this.dashBoost;
+            this.physicsBody.setVelocity(this.physicsBody.velocity.x + boostX, this.physicsBody.velocity.y + boostY);
+        }
+
+        setVisible(visible) {
+            this.body.setVisible(visible);
+            if (this.healthBar) {
+                this.healthBar.setVisible(visible && !this.isDead);
+            }
+        }
+
+        die(respawnDelay = 3000) { // can change this later but just makes it so respawns after 3 seconds
+            if (this.isDead) { // base case, dont call if already dead
+                return;
+            }
+
+            this.isDead = true; // mark the player as dead
+            this.health = 0; // set health to 0
+            this.respawnAt = Date.now() + respawnDelay; // set the time when the player should respawn
+            this.physicsBody.setVelocity(0); // stop moving
+            this.setVisible(false);
+
+            if (this === player) { // show respawn HUD for the local player, cant have it showing for everyone
+                const respawnHud = document.getElementById('respawn-hud');
+                const respawnValue = document.getElementById('respawn-value');
+                respawnHud.style.display = 'block';
+                respawnValue.textContent = String(Math.ceil(respawnDelay / 1000));
+            }
+        }
+
+        respawn() {
+            const margin = 50; // cant spawn at edges 
+            const respawnX = Phaser.Math.Between(margin, tableWidth - margin); // spawn random x and y in map
+            const respawnY = Phaser.Math.Between(margin, tableHeight - margin);
+
+            if (!this.body.body) { // add physics body if it doesn't exist yet
+                scene.physics.add.existing(this.body);
+                this.body.body.setCollideWorldBounds(true);
+                this.physicsBody = this.body.body;
+            }
+
+            this.body.setPosition(respawnX, respawnY); // teleport to where it should respawn, make everything normal again
+            this.physicsBody.position.set(respawnX, respawnY);
+            this.physicsBody.prev.set(respawnX, respawnY);
+            this.physicsBody.enable = true;
+            this.physicsBody.checkCollision.none = this.isInvincible;
+            this.body.setActive(true);
+            this.health = this.maxHealth;
+            this.isDead = false;
+            this.respawnAt = 0;
+            this.setVisible(true);
+
+            if (this === player) { // now make the respawn countdown go away
+                document.getElementById('respawn-hud').style.display = 'none';
+            }
+        }
+
+        }
+
+
+        class SwordBot extends Player /*inherits alot of the player stuff because its easier*/
+        {
+        constructor(username, health, playerspeed, body, sword, head, damage = 0)
+        {
+            super(username, health, playerspeed, body); /*what we get from the player*/
+            this.sword = sword;
+            this.head = head;
+            this.damage = damage; // not balanced yet, just an attribute for now
+            this.swordHoldDistance = 80;
+            this.deflectRadius = 80; /*will use later , controls how far away sword can deflect bullets*/
+            this.swordHitRadius = 60; // how close the sword needs to be to actually cut someone
+            this.targetsAlreadyHit = new Set(); // players already damaged by the current touch, so it isn't reapplied every frame
+            this.hasFireball = false;
+            this.fireballCooldown = 2000;
+            this.lastFireballTime = -Infinity;
+        }
+
+        // Keep sword position and rotation synced with the player's current facing angle.
+        updateSwordPose(aimAngle, facingRotation) {
+        
+            this.sword.x = this.body.x + Math.cos(aimAngle) * this.swordHoldDistance; // x position
+            this.sword.y = this.body.y + Math.sin(aimAngle) * this.swordHoldDistance; // y position
+            this.sword.rotation = facingRotation; // rotate the sword to face the direction the player is aiming
+        }
+
+        setVisible(visible) {
+            super.setVisible(visible);
+            this.sword.setVisible(visible);
+            this.head.setVisible(visible);
+        }
+
+        deflectBullet(currentbullet, sword) 
+        {
+            // Convert the sword's sprite rotation into the angle used by the bullet.
+            const angle = sword.rotation - Phaser.Math.DegToRad(90); // because the sprite is straight up by default it needs to be rotated at a right angle
+            // Make the sword bot the new owner so the deflected bullet can damage enemies, not itself.
+            currentbullet.owner = this;
+            // Keep the bullet's existing speed and send it in the sword's direction.
+            currentbullet.fire(angle); //sends the bullet flying in the direction of the sword
+        }
+
+        // On click, deflect any nearby bullets away in the sword direction.
+        deflectNearbyBullets(bulletsGroup) {  // bulletsgroup is every bullet in the game
+
+            bulletsGroup.children.iterate((bullet) => { // check each bullet in the group
+            if (bullet && Phaser.Math.Distance.Between(bullet.x, bullet.y, this.sword.x, this.sword.y) < this.deflectRadius) { // if in range
+                this.deflectBullet(bullet, this.sword);
+            }
+            });
+
+            // Other players' bullets are real on their own screen, so ask the owner to deflect it for us.
+            Object.values(remoteBullets).forEach((copy) => {
+                if (Phaser.Math.Distance.Between(copy.x, copy.y, this.sword.x, this.sword.y) < this.deflectRadius) {
+                    sendToServer('deflectBullet', {
+                        ownerId: copy.ownerId,
+                        id: copy.netId,
+                        angle: this.sword.rotation - Phaser.Math.DegToRad(90)
+                    });
+                }
+            });
+        }
+
+        fireball(scene, bulletsGroup) { 
+            if (!this.hasFireball || !this.sword || scene.time.now - this.lastFireballTime < this.fireballCooldown) { // if on cooldown
+            return; // do nothing if on cooldown, this is called when the key is pressed
+            }
+
+            this.lastFireballTime = scene.time.now; // keeps track of cooldown
+
+            const fireball = new Bullet(scene, this.sword.x, this.sword.y, 60, false, 350, this, "fireball"); // makes the fireball
+            const fireballAngle = this.sword.rotation - Phaser.Math.DegToRad(90); // orients it into direction aiming
+            fireball.setRotation(fireballAngle + Phaser.Math.DegToRad(180)); 
+            bulletsGroup.add(fireball); // makes it act like a bullet so it does damage, helpful for reusing
+            fireball.fire(fireballAngle);
+        }
+
+        // Deal damage to any nearby player once per touch; they only take another hit after leaving swordHitRadius and re-entering it.
+        damageNearbyPlayers(possibleTargets) {
+
+            possibleTargets.forEach((candidatePlayer) => { // go through every possible player passed in (eg the dummy, other real players later on)
+            if (!candidatePlayer || candidatePlayer === this || candidatePlayer.isDead || candidatePlayer.isInvincible) { // skip missing, self, dead, or invincible players
+                this.targetsAlreadyHit.delete(candidatePlayer); // clear them out so a future respawn/touch can be hit again fresh
+                return;
+            }
+
+            // how far the sword currently is from that player's body, used to work out if they're actually being touched
+            const isTouchingTarget = Phaser.Math.Distance.Between(this.sword.x, this.sword.y, candidatePlayer.body.x, candidatePlayer.body.y) < this.swordHitRadius;
+
+            if (!isTouchingTarget) { // not touching right now
+                this.targetsAlreadyHit.delete(candidatePlayer); // forget we hit them, so walking back into the sword later counts as a new hit
+                return;
+            }
+
+            if (this.targetsAlreadyHit.has(candidatePlayer)) { // already touching and already damaged this touch
+                return; // do nothing, this stops the damage applying every single frame while still overlapping
+            }
+
+            this.targetsAlreadyHit.add(candidatePlayer); // remember this player so the next frames in this same touch dont deal damage again
+            const damageDealt = Math.min(this.damage, candidatePlayer.health);
+            candidatePlayer.health = Math.max(0, candidatePlayer.health - damageDealt); // apply the hit, clamped so health cant go negative
+            candidatePlayer.updateHealthBar();
+
+            if (this === player) {
+                increaseScore(damageDealt);
+            }
+            });
+        }
+
+        }
+
+        class BulletBot extends Player /*inherits alot of the player stuff because its easier*/
+        {
+        constructor(username, health, playerspeed, body, head, bulletSpeed , bulletSize = 5, explosive = false, damage = 0)
+        {
+            super(username, health, playerspeed, body);
+            this.head = head;
+            this.bulletSpeed = bulletSpeed;
+            this.bulletSize = bulletSize;
+            this.explosive = explosive;
+            this.damage = damage;
+        }
+
+        shootBullet(scene, bulletsGroup) {
+            const firingAngle = this.head.rotation - Phaser.Math.DegToRad(90);
+            const spawnDistance = 80;
+            const bulletX = this.head.x + Math.cos(firingAngle) * spawnDistance;
+            const bulletY = this.head.y + Math.sin(firingAngle) * spawnDistance;
+            const bullet = new Bullet(scene, bulletX, bulletY, this.bulletSize, this.explosive, this.bulletSpeed, this);
+            bulletsGroup.add(bullet);
+            bullet.fire(firingAngle);
+        }
+
+        setVisible(visible) {
+            super.setVisible(visible);
+            this.head.setVisible(visible);
+        }
+        }
+
+        class Bullet extends Phaser.GameObjects.Sprite
+        {
+        constructor(scene, x, y, size = 5, explosive = false, speed, owner = null, texture = "bullet") /*Ill need to be doing this alot, so i made a constructor. might be lots of types of ranged fighters*/
+        {
+            super(scene, x, y, texture);
+            this.size = size;
+            this.explosive = explosive;
+            this.speed = speed;
+            this.damage = owner ? owner.damage : 0; // inherit damage from player that shot it, or use zero if no owner was supplied
+            this.owner = owner;
+            this.isExploding = false;
+
+            this.setDisplaySize(size * 2, size * 2);
+            if (texture === "bullet") {
+                this.setTint(explosive ? 0xff8800 : 0xff0000);
+            }
+            scene.add.existing(this);
+            scene.physics.add.existing(this);
+            this.body.setCircle(size / this.scaleX);
+            this.body.setAllowGravity(false);
+        }
+
+        fire(angle, forceSync = true) //the angle is the direction the bullet will travel
+        {
+            this.body.setVelocity( //means the bullet will go in the direction of the angle at the speed of the bullet
+            Math.cos(angle) * this.speed, // because we need it in vector form not just modular speed
+            Math.sin(angle) * this.speed
+            );
+            this.syncToServer(forceSync);
+        }
+
+        // Tells the other players about this bullet so they can see it. Only bullets that the local player fired are shared.
+        syncToServer(force)
+        {
+            const now = this.scene.time.now;
+            if (!this.netId) {
+                if (this.owner !== player) { // dummies bullets, or someone elses, are not shared
+                    return;
+                }
+                this.netId = nextNetId();
+                this.lastNetSend = now;
+                sendToServer('bulletSpawn', {
+                    id: this.netId, x: this.x, y: this.y,
+                    vx: this.body.velocity.x, vy: this.body.velocity.y,
+                    size: this.size, rotation: this.rotation, texture: this.texture.key,
+                    tint: this.isTinted ? this.tintTopLeft : null
+                });
+                return;
+            }
+
+            if (!force && now - this.lastNetSend < 50) { // tracking bullets change direction every frame, so only send 20 times a second
+                return;
+            }
+            this.lastNetSend = now;
+            sendToServer('bulletUpdate', { id: this.netId, x: this.x, y: this.y, vx: this.body.velocity.x, vy: this.body.velocity.y });
+        }
+
+        destroy(fromScene)
+        {
+            if (this.netId && !this.netRemoved) { // tell the others to remove their copy
+                this.netRemoved = true;
+                sendToServer('bulletRemoved', { id: this.netId });
+            }
+            super.destroy(fromScene);
+        }
+
+        findNearestEnemy(enemies)
+        {
+            let nearest = null; // leaving this open, will put the nearest enemy in if they're found
+            let nearestDistance = Infinity; // replaced by actual distance after
+            enemies.forEach((enemy) => { // goes through every player thats not the owner of the bullet
+                if (!enemy || enemy === this.owner || enemy.isDead) {
+                    return; // error checks, does nothing if the enemy is invalid, the owner, or dead
+                }
+                const distance = Phaser.Math.Distance.Between(this.x, this.y, enemy.body.x, enemy.body.y);  // calculating distance 
+                if (distance < nearestDistance) { // if distance to the current enemy is less than the nearest so far, then the distance
+                    //for this enemy the nearest
+                    nearest = enemy; 
+                    nearestDistance = distance; // use nearestdistance for comparisons
+                }
+            });
+            return nearest; // return the nearest enemy found, or null if none
+        }
+
+        updateBulletDirection(enemies) // turns the velocity towards the nearest enemy, keeping the same speed
+        {
+            const target = this.findNearestEnemy(enemies); // find the nearest enemy to home in on
+            if (target && this.body) {
+                this.fire(Phaser.Math.Angle.Between(this.x, this.y, target.body.x, target.body.y), false); // auto aim at that enemy 
+            }
+        }
+
+        explode()
+        {
+            if (this.isExploding) { // so it doesnt expload multiple times, bugging the animation 
+            return;
+            }
+
+            this.isExploding = true;
+        
+            this.body.setVelocity(0, 0); // stop it from moving
+            this.body.enable = false; // disable physics body so it doesn't interact with anything
+            this.clearTint();
+            this.setTexture("explosionSpriteSheet"); // change the bullet to the explosion
+            this.setDisplaySize(this.size * 6, this.size * 6);
+            this.once("animationcomplete", () => this.destroy()); // destroy the bullet after the explosion animation completes
+            this.play("bulletexplosionanim"); // play the explosion animation
+        }
+
+        isOutOfBounds() /*this is useful to check if its out of the table, will use this alot*/
+        {
+            return this.x < 0 || this.x > tableWidth || this.y < 0 || this.y > tableHeight;
+        }
+        }
+
+
+
+        class Bomb extends Phaser.GameObjects.Sprite
+        {
+        constructor(scene, x, y, owner) // because needs to be able to be placed ontop of the user, coordinates needed
+        {
+            super(scene, x, y, "bombimg"); // use the constructor for normal phaser objects, bombimg is the image of the bomb
+            this.owner = owner; // keep track of who placed the bomb
+            this.damage = owner.bombDamage;
+            this.ownerArmed = false; // the owner can walk off a freshly placed bomb, once they leave it can hurt them
+            this.hasExploded = false;
+            this.fuseEndTime = scene.time.now + 3000; // explodes by itself after 3 seconds
+
+            this.setDisplaySize(40, 52); // all the stuff for making the bomb an object in phaser
+            this.setDepth(1);
+            scene.add.existing(this);
+            scene.physics.add.existing(this);
+            this.body.setAllowGravity(false);
+            this.body.setImmovable(true);
+
+            if (owner === player) { // let the other players see this bomb
+                this.netId = nextNetId();
+                sendToServer('bombPlaced', { id: this.netId, x: x, y: y });
+            }
+        }
+
+        explode() // makes the bomb explode only once, and takes care of actually creating the explosion and destroying the bomb
+        {
+            if (this.hasExploded) { // so it only explodes once
+                return;
+            }
+
+            this.hasExploded = true;
+            if (this.netId) {
+                sendToServer('bombExploded', { id: this.netId, x: this.x, y: this.y });
+            }
+            explosions.push(new Explosion(this.scene, this.x, this.y, this.owner, this.damage)); 
+            //makes a new explosion at bomb's location. (the bomb is the parent of the explosion, so this can be used)
+            this.destroy(); // remove the bomb from the game after it explodes
+        }
+        }
+
+        class Explosion extends Phaser.GameObjects.Sprite
+        {
+        constructor(scene, x, y, owner, damage) // all important to keep track of later on
+        {
+            super(scene, x, y, "explosionSpriteSheet"); // normal phaser object constructor
+            this.owner = owner;
+            this.damage = damage;
+            this.hitTargets = new Set(); // each player can only be hurt once per explosion
+            this.radius = 90; // will hard code this for now, have already added lots at once, can be expanded on later
+
+            this.setDisplaySize(this.radius * 2, this.radius * 2); // set the display size based on the explosion radius
+            //2 times radius because the display size is the diameter of the explosion
+            this.setDepth(3);
+            scene.add.existing(this); // add the explosion to the scene so it becomes visible and can interact with players
+            this.once("animationcomplete", () => this.destroy()); // destroy the explosion object once its animation is complete
+            this.play("bulletexplosionanim"); // play the explosion animation for the explosion object
+        }
+
+        touches(target) { 
+            return Phaser.Geom.Intersects.CircleToRectangle( // returns true if the player touches the explosion
+                new Phaser.Geom.Circle(this.x, this.y, this.radius * 0.8), // making explosion slightly smaller than sprite
+                // sprite is slightly larger than the actual explosion hit area, becauuse the sprite is a rectangle, and the 
+                // actual hitbox is circular
+                target.body.getBounds() 
+            );
+        }
+        }
+
+        const config = {
+        type: Phaser.AUTO,
+        width: gameWidth,
+        height: gameHeight,
+        parent: 'game-container',
+        backgroundColor: '#eeeeee',
+        physics: {
+            default: 'arcade',
+            arcade: {
+            gravity: { y: 0 },
+            debug: false
+            }
+        },
+        scene: {
+            preload: preload,
+            create: create,
+            update: update
+        }
+        };
+
+        let game;
+        try {
+        game = new Phaser.Game(config);
+        } catch (error) {
+        console.error('Phaser startup error:', error);
+        gameContainer.innerHTML = 'Game failed to start. Check console for details.';
+        }
+
+        let playabody;
+        const remotePlayers = {}; // socket id -> SwordBot copy of that player, so all the normal combat code works on them
+        const remoteBullets = {}; // net id -> look-only copy of another player's bullet (the real one is on its owner's screen)
+        const remoteBombs = {}; // net id -> look-only copy of another player's bomb
+        let lastMovementSendTime = 0;
+        let localAimAngle = 0; // the angle the local player is aiming, sent so others can draw the sword and head
+        let netCounter = 0;
+
+        function sendToServer(eventName, data) {
+            if (window.socket && window.socket.connected) {
+                window.socket.emit(eventName, data);
+            }
+        }
+
+        function nextNetId() { // unique across every player because it contains the socket id
+            netCounter += 1;
+            return `${window.socket ? window.socket.id : 'offline'}-${netCounter}`;
+        }
+
+        // Everything that can be attacked: the dummies and every other real player.
+        function getTargets() {
+            return [...dummies, ...Object.values(remotePlayers)];
+        }
+        let key;
+        let wasdKeys;
+        let fireKey;
+        let wasFireKeyDown = false;
+        let invincibilityKey;
+        let wasInvincibilityKeyDown = false;
+        let superSpeedKey;
+        let wasSuperSpeedKeyDown = false;
+        let dashKey;
+        let wasDashKeyDown = false;
+        let topHead;
+        let cursor;
+        let click;
+        let scene;
+        let bullets;
+        let bombs;
+        let explosions = []; // active bomb explosions, checked every frame for players touching them
+        let bombKey;
+        let trackingKey;
+        let wasTrackingKeyDown = false;
+        let wasBombKeyDown = false;
+        let player;
+        let dummies = []; // every target practice dummy in the game
+        let swordSprite;
+        let score = 0;
+        let timer = 0;
+        let timeStart = 0;
+        let timeSet = 10; // seconds between upgrade card phases
+        let paused = false;
+        let showedCards = false;
+        let upgradeCardTimeout = null; // stores the automatic ten-second card timer so it can be cancelled if a card is chosen
+        let wasMouseDown = false;
+        let upgradeRound = 0; // changes which three cards are shown next time the player reaches an upgrade phase
+        const upgradeCardGroups = {
+            sword: ["speedCard", "longerSword", "firesword", "healthCard", "invincibleCard", "superSpeedCard", "bombCard", "trackingBulletCard"], // upgrades available to SwordBots
+            gun: ["speedCard", "bulletSpeedCard", "healthCard", "invincibleCard", "superSpeedCard", "bombCard", "trackingBulletCard"] // upgrades available to BulletBots
+        };
+
+
+        // Timer state starts fresh when the run begins or after upgrades are picked.
+        function resetTimerState(startTime) {
+        timer = 0;
+        timeStart = startTime;
+        paused = false;
+        showedCards = false;
+        }
+
+        // Timer counts up from the stored start time.
+        // Builds the on-screen copy of another player, with the same sprites as the local player.
+        // It is a SwordBot, so bullets, bombs and the sword treat it like any other target.
+        function createRemotePlayer(other) {
+            const body = scene.add.sprite(other.x, other.y, "newrobotidlepic");
+            body.setScale(0.1628); // idle picture size, same as the local player
+            body.setDepth(1);
+            scene.physics.add.existing(body);
+            body.body.setImmovable(true);
+            body.body.setAllowGravity(false);
+
+            const head = scene.add.image(other.x, other.y, "roboteye");
+            head.setScale(0.2, 0.375);
+            head.setDepth(2);
+
+            const sword = scene.add.image(other.x, other.y, "swordpng");
+            sword.setScale(2);
+            sword.setDepth(2);
+
+            const remote = new SwordBot(other.name, 100, 0, body, sword, head, 25);
+            remote.createHealthBar(scene, 0xcc2222); // red like the dummies, so enemies are easy to spot
+            remote.netId = other.id;
+            remote.net = { x: other.x, y: other.y, aim: 0 }; // the latest position the server told us about
+            remote.label = scene.add.text(other.x, other.y - 70, other.name, { fontSize: "18px", color: "#ffffff" }).setOrigin(0.5).setDepth(3);
+
+            // When combat code lowers this copy's health, that means the local player hit them, so tell the server to pass the damage on.
+            let shownHealth = remote.health;
+            Object.defineProperty(remote, "health", {
+                get() { return shownHealth; },
+                set(value) {
+                    if (value < shownHealth && !remote.applyingNetworkHealth) {
+                        sendToServer("damage", { targetId: remote.netId, amount: shownHealth - value });
+                    }
+                    shownHealth = value;
+                }
+            });
+
+            // Same overlap rules as every other target, kept so they can be removed when the player leaves.
+            remote.colliders = [
+                scene.physics.add.overlap(bullets, body, handleBulletHit(remote), null, scene),
+                scene.physics.add.overlap(body, bombs, (hitBody, bomb) => handleBombTouch(remote, bomb), null, scene)
+            ];
+            return remote;
+        }
+
+        function destroyRemotePlayer(id) {
+            const remote = remotePlayers[id];
+            remote.colliders.forEach((collider) => collider.destroy());
+            [remote.body, remote.sword, remote.head, remote.label, remote.healthBar].forEach((part) => part.destroy());
+            delete remotePlayers[id];
+
+            // their bullets and bombs go with them
+            Object.keys(remoteBullets).forEach((key) => {
+                if (remoteBullets[key].ownerId === id) {
+                    remoteBullets[key].destroy();
+                    delete remoteBullets[key];
+                }
+            });
+            Object.keys(remoteBombs).forEach((key) => {
+                if (remoteBombs[key].ownerId === id) {
+                    remoteBombs[key].destroy();
+                    delete remoteBombs[key];
+                }
+            });
+        }
+
+        // Walk or idle picture for a remote player, worked out from whether it is currently moving.
+        function animateRemotePlayer(remote, isMoving, movingLeft) {
+            const sprite = remote.body;
+            if (!isMoving) {
+                if (sprite.anims.isPlaying) {
+                    sprite.anims.stop();
+                }
+                if (sprite.texture.key !== "newrobotidlepic") {
+                    sprite.setTexture("newrobotidlepic");
+                    sprite.setScale(0.1628);
+                    sprite.body.setSize(); // the picture changed size, so the hit box has to as well
+                }
+                return;
+            }
+
+            const animationKey = movingLeft ? "phaserwalkleftanim" : "phaserwalkrightanim";
+            if (sprite.texture.key === "newrobotidlepic") {
+                sprite.setScale(0.2);
+            }
+            if (!sprite.anims.isPlaying || sprite.anims.currentAnim?.key !== animationKey) {
+                sprite.anims.play(animationKey);
+                sprite.body.setSize();
+            }
+        }
+
+        // Creates, moves and removes the other players to match window.remotePlayerData.
+        function syncRemotePlayers() {
+            const data = window.remotePlayerData || {};
+
+            Object.values(data).forEach((other) => {
+                if (!remotePlayers[other.id]) {
+                    remotePlayers[other.id] = createRemotePlayer(other);
+                }
+                const remote = remotePlayers[other.id];
+
+                // health, status and aim come straight from that player's own screen
+                // only when it changed, otherwise an old update would undo a hit we have just landed before they confirm it
+                if (other.health !== remote.lastNetworkHealth) {
+                    remote.lastNetworkHealth = other.health;
+                    remote.applyingNetworkHealth = true;
+                    remote.health = other.health;
+                    remote.applyingNetworkHealth = false;
+                }
+                remote.maxHealth = other.maxHealth;
+                remote.isInvincible = other.invincible;
+                remote.swordHoldDistance = other.hold;
+
+                if (other.dead !== remote.isDead) {
+                    remote.isDead = other.dead;
+                    remote.setVisible(!other.dead);
+                    remote.label.setVisible(!other.dead);
+                }
+
+                // glide towards the newest position instead of jumping, because updates only arrive 20 times a second
+                const distanceX = other.x - remote.body.x;
+                const distanceY = other.y - remote.body.y;
+                const isTeleport = Math.abs(distanceX) > 250 || Math.abs(distanceY) > 250; // eg a respawn, snap so they cant slide through other players hurting them
+                const isMoving = !isTeleport && (Math.abs(distanceX) > 2 || Math.abs(distanceY) > 2);
+                const newX = isMoving ? remote.body.x + distanceX * 0.35 : other.x;
+                const newY = isMoving ? remote.body.y + distanceY * 0.35 : other.y;
+                remote.body.body.reset(newX, newY);
+
+                animateRemotePlayer(remote, isMoving, distanceX < 0);
+                remote.head.setPosition(newX, newY - 12);
+                remote.head.rotation = other.aim + Math.PI; // same as the local head, which is turned a further 90 degrees for looks
+                remote.updateSwordPose(other.aim, other.aim + Phaser.Math.DegToRad(90));
+                remote.label.setPosition(newX, newY - 70);
+                remote.updateHealthBar();
+            });
+
+            Object.keys(remotePlayers).forEach((id) => {
+                if (!data[id]) { // they left the game
+                    destroyRemotePlayer(id);
+                }
+            });
+        }
+
+        // The look-only copies of other players' bullets move by themselves, they only need clearing up.
+        function cleanUpRemoteBullets(time) {
+            Object.keys(remoteBullets).forEach((key) => {
+                const copy = remoteBullets[key];
+                const outside = copy.x < 0 || copy.x > tableWidth || copy.y < 0 || copy.y > tableHeight;
+                if (outside || time > copy.expireAt) { // expireAt is a safety net in case the removal message is lost
+                    copy.destroy();
+                    delete remoteBullets[key];
+                }
+            });
+        }
+
+        // Combat messages from the other players. The scene may not exist yet when the first ones arrive, so they are ignored until it does.
+        if (window.socket) {
+            window.socket.on("bulletSpawn", (d) => {
+                if (!scene || !scene.sys || remoteBullets[d.id]) {
+                    return;
+                }
+                const copy = scene.add.sprite(d.x, d.y, d.texture);
+                copy.setDisplaySize(d.size * 2, d.size * 2);
+                copy.setRotation(d.rotation);
+                if (d.tint !== null) {
+                    copy.setTint(d.tint);
+                }
+                scene.physics.add.existing(copy);
+                copy.body.setAllowGravity(false);
+                copy.body.setVelocity(d.vx, d.vy);
+                copy.ownerId = d.ownerId;
+                copy.netId = d.id;
+                copy.expireAt = scene.time.now + 6000;
+                remoteBullets[d.id] = copy;
+            });
+
+            window.socket.on("bulletUpdate", (d) => {
+                const copy = remoteBullets[d.id];
+                if (copy) {
+                    copy.body.reset(d.x, d.y);
+                    copy.body.setVelocity(d.vx, d.vy);
+                }
+            });
+
+            window.socket.on("bulletRemoved", (d) => {
+                if (remoteBullets[d.id]) {
+                    remoteBullets[d.id].destroy();
+                    delete remoteBullets[d.id];
+                }
+            });
+
+            window.socket.on("bombPlaced", (d) => {
+                if (!scene || !scene.sys || remoteBombs[d.id]) {
+                    return;
+                }
+                const copy = scene.add.sprite(d.x, d.y, "bombimg");
+                copy.setDisplaySize(40, 52);
+                copy.setDepth(1);
+                copy.ownerId = d.ownerId;
+                remoteBombs[d.id] = copy;
+            });
+
+            window.socket.on("bombExploded", (d) => {
+                if (remoteBombs[d.id]) {
+                    remoteBombs[d.id].destroy();
+                    delete remoteBombs[d.id];
+                }
+                if (scene && scene.sys) {
+                    new Explosion(scene, d.x, d.y, null, 0); // only the picture, the damage is worked out on the bomb owner's screen
+                }
+            });
+
+            // Someone deflected one of our bullets with their sword, so redirect the real bullet. It now belongs to them, so it cant hurt them.
+            window.socket.on("bulletDeflected", (d) => {
+                const bullet = bullets.getChildren().find((b) => b.netId === d.id);
+                if (bullet && bullet.active && !bullet.isExploding) {
+                    bullet.owner = remotePlayers[d.by] || null;
+                    bullet.fire(d.angle);
+                }
+            });
+
+            // Another player hit us, we own our health so we apply it ourselves.
+            window.socket.on("tookDamage", (d) => {
+                if (!player || player.isDead || player.isInvincible) {
+                    return;
+                }
+                player.health = Math.max(0, player.health - d.amount);
+                player.updateHealthBar();
+            });
+        }
+
+        // Tell everyone about the local player about 20 times a second.
+        function sendPlayerState(time) {
+            if (!player || time - lastMovementSendTime < 50) {
+                return;
+            }
+            lastMovementSendTime = time;
+            sendToServer("playerMovement", {
+                x: playabody.x,
+                y: playabody.y,
+                aim: localAimAngle,
+                hold: player.swordHoldDistance,
+                health: player.health,
+                maxHealth: player.maxHealth,
+                dead: player.isDead,
+                invincible: player.isInvincible
+            });
+        }
+
+        function updateTimerState(currentTime) {
+        timer = Math.floor((currentTime - timeStart) / 1000);
+        }
+
+        // Timer HUD shows the remaining seconds and never goes below 0.
+        function updateTimerDisplay() {
+        if (timerDisplay) {
+            timerDisplay.textContent = Math.max(0, timeSet - timer);
+        }
+        }
+
+        function updateRespawnState(currentTime) {
+        const respawnHud = document.getElementById('respawn-hud');
+        const respawnValue = document.getElementById('respawn-value');
+
+        if (!player || !player.isDead) {
+            respawnHud.style.display = 'none';
+            return false;
+        }
+
+        const remaining = Math.max(0, player.respawnAt - currentTime);
+        respawnHud.style.display = 'block';
+        respawnValue.textContent = String(Math.ceil(remaining / 1000));
+
+        if (remaining === 0) {
+            player.respawn();
+            return false;
+        }
+
+        return true;
+        }
+
+        // Timer expiry pauses gameplay and shows the upgrade cards once.
+        function handleTimerPhase() {
+        if (!checkTimer(timeSet)) {
+            paused = true; // stop normal gameplay when the current countdown reaches zero
+        }
+
+        if (!paused) {
+            return false;
+        }
+
+        player.physicsBody.setVelocity(0);
+        if (!showedCards) {
+            offerUpgrades(); // create the three choices while the game is paused
+            showedCards = true; // stop update() from creating another set every frame
+        }
+
+        return true;
+        }
+
+
+        function preload() {
+        this.load.image("table", "neabackground.png");
+        this.load.image("head", "https://raw.githubusercontent.com/JaredKingLon/NEA/main/whiteRobotHead.png");
+        this.load.image("roboteye", "roboteye.png");
+        this.load.image("newrobotidlepic", "newrobotidlepic.png");
+        this.load.image("legClosed", "https://raw.githubusercontent.com/JaredKingLon/NEA/main/whiterobotlegclosed.png");
+        this.load.image("legOpen", "https://raw.githubusercontent.com/JaredKingLon/NEA/main/whiterobotlegclosed.png");
+        // Load both walking sheets using the same texture keys referenced by
+        // generateFrameNumbers() in the animation definitions below.
+        // Each sheet is 2500x2400: 4 columns by 6 rows of 625x400 frames.
+        this.load.spritesheet('walkingleftsspritesheet', 'walkingleftsspritesheet.png', {
+            frameWidth: 625,
+            frameHeight: 400
+        });
+        this.load.spritesheet('walkingrightspritesheet', 'walkingrightspritesheet.png', {
+            frameWidth: 625,
+            frameHeight: 400
+        });
+        this.load.image("fireball", "fireball.png");
+        this.load.image("bombimg", "bombimg.png");
+        this.load.image("bombCard", "bombcard.png");
+        this.load.image("trackingBulletCard", "trackingbullet card.png");
+        this.load.spritesheet("explosionSpriteSheet", "explosionSpriteSheet.png", {
+            frameWidth: 415,
+            frameHeight: 415
+        });
+        // Load the upgrade images so Phaser can display them when the timer ends.
+        this.load.image("speedCard","https://raw.githubusercontent.com/JaredKingLon/NEA/main/speedUpgradeCard.png"); // increases movement speed
+        this.load.image("bulletSpeedCard","https://raw.githubusercontent.com/JaredKingLon/NEA/main/bulletSpeedCard.png") // increases bullet speed
+        this.load.image("healthCard","https://raw.githubusercontent.com/JaredKingLon/NEA/main/healthUpgradeCard.png"); // increases health
+        this.load.image("swordCard","https://raw.githubusercontent.com/JaredKingLon/NEA/main/swordUpgradeCard.png"); // sword-related card image
+        this.load.image("swordpng","https://raw.githubusercontent.com/JaredKingLon/NEA/main/sword.png.png");
+        this.load.image("longerSword","https://raw.githubusercontent.com/JaredKingLon/NEA/main/longerswordcard.png"); // increases sword reach
+        this.load.image("firesword","https://raw.githubusercontent.com/JaredKingLon/NEA/main/fireswordcard.png"); // unlocks the fireball ability
+        this.load.image("invincibleCard", "https://raw.githubusercontent.com/JaredKingLon/NEA/main/invinciblecard.png"); // lets any robot toggle invincibility
+        this.load.image("superSpeedCard", "super speed.png");
+        }
+
+    
+        function create() 
+        {
+        // Start each run with a fresh timer state.
+        resetTimerState(this.time.now);
+        scene = this;
+
+        /*only calculates stuff thats inside the table and nothing can go out*/
+        this.physics.world.setBounds(0, 0, tableWidth, tableHeight);
+        this.cameras.main.setBounds(0, 0, tableWidth, tableHeight);
+
+        /*making the background the table*/
+        const background = this.add.image(tableWidth / 2, tableHeight / 2, "table");
+        background.setDisplaySize(tableWidth, tableHeight);
+
+        /*The player must be a Sprite (rather than a Rectangle) because Phaser sprites have an animation controller.*/
+        // Start on a walk-sheet frame so the scale matches the 625x400 animation frames.
+        playabody = this.add.sprite(gameWidth / 2, gameHeight / 2, "walkingrightspritesheet", 0);
+        playabody.setScale(0.2); // about 125x80 on screen
+        playabody.setDepth(1);
+        this.physics.add.existing(playabody);
+        playabody.body.setCollideWorldBounds(true);
+
+        // ADD YOUR ANIMATION DEFINITIONS HERE, after loading their frame assets above.
+        // Create one looping animation with the key 'phaserwalkleftanim', and
+        // another with the key 'phaserwalkrightanim'. Each animation's frames
+        // should come from the matching direction's spritesheet or atlas. Set a
+        // suitable frameRate and repeat: -1 so the walk cycle keeps looping.
+        // Phaser example shape (replace the frame source and frame numbers):
+        // this.anims.create({
+        //     key: 'phaserwalkleftanim',
+        //     frames: this.anims.generateFrameNumbers('YOUR_LEFT_SHEET_KEY', {
+        //         start: FIRST_FRAME,
+        //         end: LAST_FRAME
+        //     }),
+        //     frameRate: FRAMES_PER_SECOND,
+        //     repeat: -1
+        // });
+        // Add a second this.anims.create(...) with key 'phaserwalkrightanim'.
+
+        this.anims.create({ // making an object of animation for walking left, seems weird but included in phaser library
+            key: 'phaserwalkleftanim', // the name that itll be referred to later in code, whewn it needs to run
+            frames: this.anims.generateFrameNumbers('walkingleftsspritesheet', { // the sprite sheet that i made
+                start: 0, /// first frame of the walking left animation
+                end: 3 // last frame of the walking left animation
+            }),
+            frameRate: 10, // frames per second for the walking left animation
+            repeat: -1 // this will never end, keeps looping the walking left animation. 
+        });
+        this.anims.create({ // same applies to this block of code, only the names have changed.
+            key: 'phaserwalkrightanim',
+            frames: this.anims.generateFrameNumbers('walkingrightspritesheet', {
+                start: 4, 
+                end: 7
+            }),
+            frameRate: 10,
+            repeat: -1
+        });
+        this.anims.create({ // follow generally all comments from above
+            key: 'bulletexplosionanim',
+            frames: this.anims.generateFrameNumbers('explosionSpriteSheet', {
+                start: 0,
+                end: 29
+            }),
+            frameRate: 20, // frames per second for the explosion animation
+            repeat: 0 // play the explosion animation only once
+        });
+        const bulletGraphic = this.add.graphics();
+        bulletGraphic.fillStyle(0xffffff, 1);
+        bulletGraphic.fillCircle(8, 8, 8);
+        bulletGraphic.generateTexture("bullet", 16, 16);
+        bulletGraphic.destroy();
+        /*camera will follow the player, the 0.12 is how quickly the camera tracks, would be weird if it instantly snapped */
+        this.cameras.main.startFollow(playabody, true, 0.12, 0.12);
+
+        key = this.input.keyboard.createCursorKeys();
+
+        bullets = this.physics.add.group();
+        bombs = this.physics.add.group();
+
+        /*again will make this into a method later*/
+        topHead = this.add.image(playabody.x, playabody.y, "roboteye"); // re-centred on the body every frame by attachTopToBody
+        topHead.setScale(0.2, 0.375); // narrower in x; its long axis points along the aim direction
+        topHead.setDepth(2);
+        this.physics.add.existing(topHead);
+
+        swordSprite = this.add.image(gameWidth / 2, gameHeight / 2, "swordpng");
+        swordSprite.setScale(2);
+        swordSprite.setDepth(2);
+
+        /*making variables for the inputs so they're easier to write stuff and read for*/
+        cursor = this.input.mousePointer;
+        click = this.input.activePointer;
+        wasdKeys = this.input.keyboard.addKeys({
+            up: Phaser.Input.Keyboard.KeyCodes.W,
+            left: Phaser.Input.Keyboard.KeyCodes.A,
+            down: Phaser.Input.Keyboard.KeyCodes.S,
+            right: Phaser.Input.Keyboard.KeyCodes.D
+        });
+        fireKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+        invincibilityKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
+        superSpeedKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Z);
+        bombKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+        trackingKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L);
+        dashKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+
+        /*getting the player name from element*/
+        const savedPlayerName = localStorage.getItem('playerName') 
+        player = new SwordBot(savedPlayerName, 100, 250, playabody, swordSprite, topHead, 25);
+        player.createHealthBar(this, 0x22cc55);
+
+        /*target practice dummies, stand still and auto-aim/shoot at the player*/
+        const makeDummy = (x) => {
+            const dummyBody = this.add.rectangle(x, gameHeight / 2, 100, 100, 0xaa2222);
+            dummyBody.setDepth(1);
+            this.physics.add.existing(dummyBody);
+            dummyBody.body.setCollideWorldBounds(true);
+            dummyBody.body.setImmovable(true);
+
+            const dummyHead = this.add.image(dummyBody.x, dummyBody.y, "head");
+            dummyHead.setScale(0.25);
+            dummyHead.setDepth(2);
+            this.physics.add.existing(dummyHead);
+
+            const newDummy = new BulletBot("Dummy", 100, 0, dummyBody, dummyHead, 250, 5, false, 25);
+            newDummy.createHealthBar(this, 0xcc2222);
+            newDummy.lastShotTime = 0; // each dummy keeps its own shooting timer
+            dummies.push(newDummy);
+        };
+        // No dummies are created for now. To bring them back, call makeDummy(gameWidth / 2 + 300) and makeDummy(gameWidth / 2 + 400).
+
+        // Any bullet hitting any player-type object (player, dummy, bulletbot or swordbot) deals the bullet's damage to that target.
+        this.physics.add.overlap(bullets, player.body, handleBulletHit(player), null, this);
+        dummies.forEach((dummy) => this.physics.add.overlap(bullets, dummy.body, handleBulletHit(dummy), null, this));
+
+        // Any player touching a bomb (apart from its owner before they have stepped off it) sets it off, and so does any bullet.
+        // Phaser passes (body, bomb) to the callback, so the arrow function just adds which player the body belongs to.
+        this.physics.add.overlap(player.body, bombs, (body, bomb) => handleBombTouch(player, bomb), null, this);
+        dummies.forEach((dummy) => this.physics.add.overlap(dummy.body, bombs, (body, bomb) => handleBombTouch(dummy, bomb), null, this));
+        this.physics.add.overlap(bullets, bombs, (bullet, bomb) => {
+            if (bullet.active && !bullet.isExploding) {
+                bomb.explode();
+            }
+        }, null, this);
+        }
+
+        // Reusable overlap handler so every player-type target takes bullet damage the same way.
+        // Phaser calls Group-vs-single-object overlaps as (singleObject, groupMember), so hitBody is the target's body and bullet is the actual Bullet instance.
+        function handleBulletHit(target) {
+        return (hitBody, bullet) => {
+            if (!bullet.active || !hitBody.active || target.isDead || target.isInvincible || bullet.isExploding) {
+            return;
+            }
+
+            if (bullet.owner === target) {
+            return;
+            }
+
+            const damage = Math.min(bullet.damage, target.health);
+            target.health = Math.max(0, target.health - damage);
+            target.updateHealthBar();
+
+            if (bullet.owner === player) {
+                increaseScore(damage);
+            }
+
+            if (bullet.explosive) {
+            bullet.explode();
+            } else {
+            bullet.destroy();
+            }
+        };
+        }
+
+
+        // if a body touches a bomb
+        function handleBombTouch(target, bomb) {
+            // if bombs are already exploding and players dead
+            if (!bomb.active || bomb.hasExploded || target.isDead) {
+                return;
+            }
+
+            // if owner standing on bomb. 
+            // Dont explode bomb until they step off, as it becomes armed and can hurt them after they step off
+            if (bomb.owner === target && !bomb.ownerArmed) {
+                return; // it not exploding
+            }
+
+            bomb.explode(); // explode
+        }
+
+        
+        function updateBombsAndExplosions(time) { // constantly checks if bombs need to explode or damage players
+        // the slice copies the list because exploding a bomb deletes it from the group while we are looping over it
+        bombs.getChildren().slice().forEach((bomb) => {
+            // once owner steps off the bomb, it becomes armed and can hurt them
+            if (!bomb.ownerArmed && !Phaser.Geom.Intersects.RectangleToRectangle(bomb.getBounds(), bomb.owner.body.getBounds())) {
+                bomb.ownerArmed = true;
+            }
+
+            // after the fuseEndTime( which is 3 seconds after bomb placed) it explodes
+            if (time >= bomb.fuseEndTime) {
+                bomb.explode();
+            }
+        });
+
+        // Dont worry about explosions that have finished, filter them out
+        explosions = explosions.filter((explosion) => explosion.active);
+        explosions.forEach((explosion) => { // check each active explosion for collisions with players
+            [player, ...getTargets()].forEach((target) => {
+                //error checking, dont need to check dead or invincible players, or players already hit by this explosion
+                if (!target || target.isDead || target.isInvincible || explosion.hitTargets.has(target) || !explosion.touches(target)) {
+                    return;
+                }
+
+                explosion.hitTargets.add(target); // remember that the player has been hit already, so cant take damage again
+  
+                const damage = Math.min(explosion.damage, target.health); // only take as much health as the player has left
+                target.health = Math.max(0, target.health - damage); // subtract damage from health but not below zero
+                target.updateHealthBar(); // show the new health bar
+
+                // only score points for hurting other players, not for hurting yourself
+                if (explosion.owner === player && target !== player) {
+                    increaseScore(damage);
+                }
+            });
+        });
+        }
+
+        function update(time) {
+        syncRemotePlayers();
+        /*every time it updates itll check the timer*/
+        updateTimerState(time);
+        updateTimerDisplay();
+
+        if (player.health <= 0) {
+            player.die(3000);
+        }
+
+        dummies.forEach((dummy) => {
+            if (dummy.health <= 0) {
+                dummy.die(3000);
+            }
+
+            if (dummy.isDead && Date.now() >= dummy.respawnAt) {
+                dummy.respawn();
+            }
+        });
+
+        const isRespawning = updateRespawnState(Date.now());
+        sendPlayerState(time); // before the pause and respawn returns below, so others still see us while we choose an upgrade or are dead
+        cleanUpRemoteBullets(time);
+
+        if (handleTimerPhase()) {
+            return;
+        }
+
+        if (isRespawning) {
+            return;
+        }
+
+        bodyMovement(time);
+        updateHorizontalMovementAnimation();
+
+        player.attachTopToBody(topHead, -12); // negative moves the eye up
+        cursor.updateWorldPoint(scene.cameras.main); // worldX/Y only refresh on mouse events, so they go stale while the camera scrolls
+        const aimAngle = player.pointTopToCursor(topHead, cursor, tableWidth, tableHeight);
+        localAimAngle = aimAngle;
+
+        /* if its a swordbot itll aim the sword at the cursor, if its a bulletbot itll shoot bullets at the cursor, this is where the polymorphism comes in handy*/
+        if (player instanceof SwordBot) {
+            player.updateSwordPose(aimAngle, topHead.rotation);
+            player.damageNearbyPlayers(getTargets());
+        }
+
+        // Dummies auto-aim at the player but no longer fire.
+        dummies.forEach((dummy) => {
+            if (dummy.isDead) {
+                return;
+            }
+            dummy.attachTopToBody(dummy.head);
+            const dummyAimAngle = Phaser.Math.Angle.Between(dummy.head.x, dummy.head.y, playabody.x, playabody.y);
+            dummy.head.rotation = dummyAimAngle + Phaser.Math.DegToRad(90);
+        });
+
+        monitorClick();
+        monitorFireball();
+        monitorBomb();
+        monitorTracking();
+        updateBombsAndExplosions(time);
+        monitorInvincibility(time);
+        monitorSuperSpeed(time);
+        monitorDash(time, aimAngle);
+
+        // Visual-only: the sword and bullets read topHead.rotation above, and pointTopToCursor resets it every frame.
+        topHead.rotation += Phaser.Math.DegToRad(90);
+
+        bullets.children.iterate((bullet) => {
+            if (bullet) {
+            if (bullet.isTracking && !bullet.isExploding) {
+                bullet.updateBulletDirection(getTargets());
+            }
+            checkbulletBounds(bullet);
+            }
+        });
+        }
+
+
+        function offerUpgrades()
+        {
+
+        const cam = scene.cameras.main;
+        const centerX = cam.worldView.centerX; /*getting centre of the camera so the cards are in the middle of the screen*/
+        const centerY = cam.worldView.centerY;
+        const gap = 260; // keeps the three cards spaced evenly across the camera view
+        const shownCards = []; // stores the cards so they can all be removed after a choice or timeout
+        const cards = player instanceof BulletBot
+            ? upgradeCardGroups.gun // BulletBots only see gun-related choices
+            : upgradeCardGroups.sword; // SwordBots see sword-related choices
+
+        /*show 3 cards in a row, all the dimensions are there*/
+        const chosenCards = Phaser.Utils.Array.Shuffle([...cards]).slice(0, 3); /*pick three different random cards each upgrade phase*/
+        for (let i = 0; i < 3; i++) {
+            const cardType = chosenCards[i];
+            const cardX = centerX + ((i - 1) * gap);
+            const card = scene.add.image(cardX, centerY, cardType); /*adding the card to the screen*/
+            card.setDisplaySize(220, 300); // give every card the same stable size
+            card.setDepth(50); // place cards above the game and other HUD elements
+            card.setInteractive();/*makes it so the cards can be clicked on*/
+            shownCards.push(card); /*adding the card to the array so we can remove them later*/
+
+            card.on('pointerdown', () => { /*when its clicked this will run*/
+            if (cardType === "speedCard") { /*bunch of selection statements to see which card was clicked and apply the upgrade*/
+                player.playerspeed += 200; // make the player move faster
+            } else if (cardType === "longerSword") {
+                if (player instanceof SwordBot) {
+                player.swordHoldDistance += 30; // increase the distance between the player and sword
+                }
+            } else if (cardType === "firesword") {
+                if (player instanceof SwordBot) {
+                player.hasFireball = true; // allow the SwordBot to fireballs with the fire key
+                }
+            } else if (cardType === "invincibleCard") {
+                player.hasInvincibility = true;
+            } else if (cardType === "bombCard") {
+                player.hasBomb = true; // allow placing bombs with the B key
+            } else if (cardType === "trackingBulletCard") {
+                player.hasTrackingBullet = true; // allow firing tracking bullets with the L key
+            } else if (cardType === "superSpeedCard") {
+                player.hasSuperSpeed = true;
+            } else if (cardType === "bulletSpeedCard") {
+                if (player instanceof BulletBot) {
+                player.bulletSpeed += 50; // make future bullets travel faster
+                }
+            } else if (cardType === "healthCard") {
+                player.health += 50; // restore and increase the player's current health
+            }
+
+            // Remove all 3 cards and resume the game.
+            shownCards.forEach((card) => card.destroy()); // remove every choice, including the two not selected
+                                        if (upgradeCardTimeout) {
+                                                clearTimeout(upgradeCardTimeout); // prevent the automatic timeout running after a manual choice
+                                                upgradeCardTimeout = null; // mark that there is no longer an active card timer
+                                        }
+                    upgradeRound += 1; // rotate the available choices for the next upgrade phase
+          resetTimerState(scene.time.now); // restart the gameplay timer and unpause the game
+        });
+      }
+
+                // Give the player ten seconds to choose before continuing automatically.
+                upgradeCardTimeout = setTimeout(() => {
+                        shownCards.forEach((card) => card.destroy()); // remove the cards when the choice period ends
+                        upgradeCardTimeout = null; // clear the completed timeout reference
+                        upgradeRound += 1; // rotate the choices even when no card was selected
+                        resetTimerState(scene.time.now); // continue the game without applying an upgrade
+                }, 10000);
+    }
+
+
+    function updateHorizontalMovementAnimation() {
+            if (!player || !player.physicsBody || !player.body.anims) {
+                return;
+            }
+
+            // Read the physics result rather than the keys: this also handles opposing
+            // keys and horizontal movement caused by a dash consistently.
+            const horizontalVelocity = player.physicsBody.velocity.x;
+            const verticalVelocity = player.physicsBody.velocity.y;
+
+            if (horizontalVelocity === 0 && verticalVelocity === 0) {
+                // Standing still: swap to the single idle image (768x768, scaled to the walk sprite's 125px width).
+                if (player.body.anims.isPlaying) {
+                    player.body.anims.stop();
+                }
+                if (player.body.texture.key !== 'newrobotidlepic') {
+                    player.body.setTexture('newrobotidlepic');
+                    player.body.setScale(0.1628);
+                }
+                return;
+            }
+
+            // Left (including diagonals) uses the left animation; straight up/down uses the right one.
+            const animationKey = horizontalVelocity < 0
+                ? 'phaserwalkleftanim'
+                : 'phaserwalkrightanim';
+
+            // This check avoids Phaser warnings if the matching animation is unavailable.
+            if (!scene.anims.exists(animationKey)) {
+                return;
+            }
+
+            if (player.body.texture.key === 'newrobotidlepic') {
+                player.body.setScale(0.2); // back to the walk frames' scale
+            }
+
+            // Only (re)start when the direction changes or after idling; calling play every frame
+            // would repeatedly reset the animation to its first frame.
+            if (!player.body.anims.isPlaying || player.body.anims.currentAnim?.key !== animationKey) {
+                player.body.anims.play(animationKey);
+            }
+    }
+
+
+    function bodyMovement(time) {
+            if (!player.physicsBody) {
+                return;
+            }
+
+            if (time < player.dashEndTime) {
+                return; // let the dash boost carry through instead of being stomped by movement input
+            }
+
+            player.physicsBody.setVelocity(0); /*doesnt continually adding up the speed, no momentum or it would feel like skating on ice*/
+
+      if (key.left.isDown || wasdKeys.left.isDown) {
+                player.physicsBody.setVelocityX(-player.getMovementSpeed(time)); /*used the player speed so I can change it easier with upgrades*/
+      }
+
+      if (key.right.isDown || wasdKeys.right.isDown) {
+                player.physicsBody.setVelocityX(player.getMovementSpeed(time));
+      }
+
+      if (key.up.isDown || wasdKeys.up.isDown) {
+                player.physicsBody.setVelocityY(-player.getMovementSpeed(time));
+      }
+
+      if (key.down.isDown || wasdKeys.down.isDown) {
+                player.physicsBody.setVelocityY(player.getMovementSpeed(time));
+      }
+    }
+
+
+    function monitorClick() { /*this is just helpful to have in a function, checks if clicked and does appropriate things */
+      if (click.isDown && !wasMouseDown) {
+        if (player instanceof BulletBot) {
+                    player.shootBullet(scene, bullets);
+        } else if (player instanceof SwordBot) {
+          player.deflectNearbyBullets(bullets);
+        }
+        wasMouseDown = true;
+      }
+
+      if (!click.isDown) {
+        wasMouseDown = false;
+      }
+    }
+
+        function monitorTracking() {
+            if (trackingKey.isDown && !wasTrackingKeyDown) {
+                player.fireTrackingBullet(scene, bullets, getTargets());
+                wasTrackingKeyDown = true;
+            }
+
+            if (!trackingKey.isDown) {
+                wasTrackingKeyDown = false;
+            }
+        }
+
+        function monitorBomb() {
+            if (bombKey.isDown && !wasBombKeyDown) {
+                player.placeBomb(scene, bombs);
+                wasBombKeyDown = true;
+            }
+
+            if (!bombKey.isDown) {
+                wasBombKeyDown = false;
+            }
+        }
+
+        function monitorFireball() {
+            if (fireKey.isDown && !wasFireKeyDown && player instanceof SwordBot) {
+                player.fireball(scene, bullets);
+                wasFireKeyDown = true;
+            }
+
+            if (!fireKey.isDown) {
+                wasFireKeyDown = false;
+            }
+        }
+
+        function monitorInvincibility(time) {
+            if (player.isInvincible && time >= player.invincibilityEndTime) {
+                player.toggleInvincibility(time); // switch off automatically when the 3 seconds are up
+            }
+
+            if (invincibilityKey.isDown && !wasInvincibilityKeyDown) { // activate invincibility when key is pressed and wasn't already down
+                player.toggleInvincibility(time); 
+                wasInvincibilityKeyDown = true; // mark key as pressed so that player cant hold and stay invincible forever
+            }
+
+            if (!invincibilityKey.isDown) { // make sure to reset the key pressed variable when finger is off button
+                wasInvincibilityKeyDown = false;
+            }
+        }
+
+        function monitorSuperSpeed(time) {
+            if (superSpeedKey.isDown && !wasSuperSpeedKeyDown) { // if pressed and wasn't already down
+                player.activateSuperSpeed(time); // set the super speed to end in 3 seconds, current time passed in as a parameter 
+                wasSuperSpeedKeyDown = true;
+            }
+
+            if (!superSpeedKey.isDown) {
+                wasSuperSpeedKeyDown = false; // reset the key pressed variable when finger is off button
+            }
+        }
+
+        function monitorDash(time, directionAngle) {
+            if (dashKey.isDown && !wasDashKeyDown) {
+                player.dash(directionAngle, time);
+                wasDashKeyDown = true;
+            }
+
+            if (!dashKey.isDown) {
+                wasDashKeyDown = false;
+            }
+        }
+
+
+    function checkbulletBounds(bullet) { /*checks if bullet out of bounds then destroys it*/
+      if (bullet.isOutOfBounds()) {
+        bullet.destroy();
+      }
+    }
+
+
+    async function increaseScore(amount) { /*changes the score on the html and database*/
+      score += amount; /*thats the local html element score */
+      const playerScoreEl = document.getElementById('player-score-value');
+      if (playerScoreEl) {
+        playerScoreEl.textContent = String(score); /*changes the score value in the HTML element*/
+      }
+
+      if (window.increaseTableScore) {
+        await window.increaseTableScore(amount);
+      }
+    }
+
+
+    function checkTimer(timeSet) { /*checks if timer is up, useful for pausing game and showing upgrades*/
+      if (timer >= timeSet) {
+        return false;
+      }
+      return true;
+    }
+    </script>
+</body>
+</html>

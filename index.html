@@ -1,25 +1,176 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="style.css">
-  <main>
-<h1> Clanker Clash! </h1>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enter Player Details</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" /> <!-- The fonts im using -->
+    <style>
+        html {
+            min-height: 100%;
+            background: url("clankerClashBackground.png") center / cover no-repeat fixed;
+        }
 
-  <section>
-  <p style ="color:#F0EDA8"> Enter Your Name:</p>
-    <input id="namebox" type="text" placeholder="Name">
+        body {
+            font-family: 'Press Start 2P', monospace;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
 
-    <p style ="color:#F0EDA8"> Enter Your Tutor</p>
-    <input id="tutorbox" type="text" placeholder="Tutor">
+        h1 {
+            font-size: clamp(40px, 9vw, 130px); /* making it big, gets proportionally bigger with screen width for further use
+            and maintenance, maybe the school screens will get smaller or bigger, and then a change would be needed*/
+            line-height: 1.3;
+            text-align: center;
+            margin: 5vh 0 25vh; /* the big bottom margin pushes the form far down the dscreen */
+            animation: zoom 2s ease-in-out infinite alternate; /* using premade animation to make the welcome text get big and smaall */
+        }
 
-    <button id="signup" style ="background-color:F5E590 white, color:yellow">JOIN</button>
-  </section>
+        @keyframes zoom {
+            from { transform: scale(0.85); } /* goes from small */
+            to { transform: scale(1.1); } /* to big */
+        }
+
+        form {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 8px 0;
+            box-sizing: border-box;
+            background: rgba(0, 0, 0, 0.7); /* setting color and transparency for all inputs and buttons */
+            color: white;
+            font-family: inherit; /* making the form use the same font as the rest */
+            border: 1px solid white;
+        }
+
+        @keyframes flash {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .flash {
+            animation: flash 0.4s;
+        }
+
+        #message {
+            min-height: 20px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome to Clanker Clash!</h1>
+    <form id="player-form" novalidate>
+        <label for="name">Name</label> <!-- variable name for the name input amd tutor input beloww -->
+        <input id="name" name="name" type="text" />
+
+        <label for="tutor">Tutor</label>
+        <input id="tutor" name="tutor" type="text" />
+        <p id="message" role="status"></p>
+
+        <button type="submit">Start game</button> <!-- button to insert player into database and start the game -->
+    </form>
 
     <script>
-    
+        //declaring all things that might want to change, or want to see quickly
+        const form = document.getElementById('player-form');
+        const message = document.getElementById('message');
+        const maximumNameLength = 11; // name must be less than 12 characters in design
+        const maximumTutorLength = 3; // tutor must 3 characters
 
-      
+        // wipes the old text and replays the flash, so a new error is always visibly different from the last one
+        function showMessage(text) {
+            message.textContent = text;
+            message.classList.remove('flash');
+            void message.offsetWidth; // forces the browser to restart the animation
+            message.classList.add('flash');
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            message.textContent = ''; // clear the old message straight away, even while the database is being checked
+
+            const name = document.getElementById('name').value.trim(); // gets rid of spaces for both so we can check
+            const tutor = document.getElementById('tutor').value.trim();
+
+            if (!tutor) { // if they dont put in a tutor
+                showMessage("Please enter your tutor's name."); // the message
+                return;
+            }
+
+            if (!name) { // if they dont put in a name
+                showMessage('Please enter your name.'); // the message
+                return;
+            }
+
+            const isOnlyDigits = (text) => /^\d+$/.test(text); // true if every character is a number
+
+            if (isOnlyDigits(name) || isOnlyDigits(tutor)) { // if either the name or tutor is only digits
+                showMessage('Please enter a valid name or tutor');
+                return;
+            }
+
+            if (tutor.length > maximumTutorLength) { // if too long then show message
+                showMessage('Your tutor name is too long, please enter a tutor name with less than 4 characters.');
+                return;
+            }
+
+            if (name.length > maximumNameLength) {
+                showMessage('Your name is too long, please enter a name with less than 12 characters.');
+                return;
+            }
+
+            try {
+                // loaded only now (after validation) so a failed download can't stop the checks above from working
+                const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2'); // all the supabase stuff
+                const supabase = createClient(
+                    'https://nelcsssoxnlbfrjqvvnp.supabase.co',
+                    'sb_publishable_rFSukQnhifkKajWx8iHFdg_fj3cAC8C'
+                );
+
+                const { data: existingPlayer, error: readError } = await supabase // checking if this name and tutor pair is in the table already
+                    .from('NamesAndScores')
+                    .select('Score')
+                    .eq('Names', name)
+                    .eq('Tutor', tutor) // only a clash if the tutor matches too
+                    .maybeSingle(); // returns at most one row, or null if none found
+
+                if (readError) { // if there was an error reading from the database
+                    showMessage(readError.message);
+                    return;
+                }
+
+                if (existingPlayer) { // this name and tutor pair is already taken
+                    showMessage('The name and tutor have to be unique.');
+                    return; // stop from inserting into database by returning
+                }
+
+                const { error: saveError } = await supabase
+                    .from('NamesAndScores')
+                    .insert({ Names: name, Tutor: tutor, Score: 0 });
+
+                if (saveError) {
+                    showMessage(saveError.message);
+                    return;
+                }
+            } catch (error) { // eg no internet, or the supabase library failed to load
+                showMessage('Could not reach the server: ' + error.message);
+                return;
+            }
+
+            localStorage.setItem('playerName', name);
+            localStorage.setItem('playerTutor', tutor); // for use the actual game and end screen
+            showMessage('You have joined!');// message to show they did it correctly
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // let the player read the message
+            window.location.href = `maingamephaser.html?playerName=${encodeURIComponent(name)}&playerTutor=${encodeURIComponent(tutor)}`; // redirect to the main game page and give them the playerName
+        });
     </script>
-  </main>
+</body>
+</html>
