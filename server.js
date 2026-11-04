@@ -155,6 +155,11 @@ io.on('connection', (socket) => {
         io.to(ownerId).emit('bulletDeflected', { id, angle: cleanNumber(data.angle, -100, 100), by: socket.id });
     });
 
+    // The final upgrade round has finished, so everyone is sent to the endscreen.
+    socket.on('gameOver', () => {
+        socket.broadcast.emit('gameOver');
+    });
+
     socket.on('disconnect', () => {
         if (players[socket.id]) {
             const wasReady = players[socket.id].ready;

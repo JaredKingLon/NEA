@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Over</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: black;
+            color: white;
+            font-family: 'Press Start 2P', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        /*going to be the text for game over*/
+        h1 {
+            font-size: clamp(32px, 8vw, 110px);
+            margin: 4vh 0;
+            text-align: center;
+        }
+        /*freeing the spaace for the leaderboard*/
+        #leaderboard {
+            width: min(700px, 90vw);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-bottom: 40px;
+        }
+        /* leaderboard entry styling */
+        .entry {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 16px;
+            border: 2px solid white;
+            font-size: 14px;
+        }
+
+        .entry.top { /*manually highlighting top entry by making it yellow*/
+            background: yellow;
+            color: black;
+            border-color: yellow;
+            padding: 32px 16px;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Game Over</h1>
+    <div id="leaderboard">Loading...</div>
+
+    <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        const supabase = createClient(
+            'https://nelcsssoxnlbfrjqvvnp.supabase.co',
+            'sb_publishable_rFSukQnhifkKajWx8iHFdg_fj3cAC8C'
+        );
+        // importing the Supabase client to get all the record
+        const leaderboard = document.querySelector('#leaderboard');
+
+        const { data, error } = await supabase
+            .from('NamesAndScores')
+            .select('*')
+            .order('Score', { ascending: false }); // highest score first
+
+        if (error) { // looking out for errors
+            leaderboard.textContent = 'Could not load the leaderboard.';
+        } else {
+            leaderboard.innerHTML = '';
+            data.forEach((entry, index) => { // for each entry, create a new row in the leaderboard
+                //since its highest score first, it naturally falls in a leaderboard 
+                const row = document.createElement('div');
+                if (index === 0) {
+                    row.className = 'entry top'; // first place is yellow
+                } else {
+                    row.className = 'entry';
+                }
+                row.textContent = `${index + 1}. ${entry.Names} (${entry.Tutor}) - ${entry.Score}`;
+                leaderboard.appendChild(row);
+            });
+        }
+    </script>
+</body>
+</html>

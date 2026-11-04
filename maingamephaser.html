@@ -4,6 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Phaser Game Template</title>
+        <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
         <style>
             html,
             body {
@@ -31,9 +32,37 @@
             gap: 12px;
             padding: 14px;
             box-sizing: border-box;
-            border-left: 2px solid rgba(0, 0, 0, 0.12);
-            background: rgba(255, 255, 255, 0.25);
+            border-left: 2px solid rgba(255, 255, 255, 0.3);
+            background: #000;
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
             overflow-y: auto;
+        }
+
+        #leaderboard h2 {
+            font-size: 1rem;
+            line-height: 1.4;
+        }
+
+        #leaderboard .score-entry {
+            margin-bottom: 10px;
+            padding: 10px 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+        }
+
+        #leaderboard .score-entry.own-score {
+            background: rgba(0, 160, 60, 0.85);
+            border-color: #4dff88;
+        }
+
+        #leaderboard .score-entry p {
+            margin: 6px 0;
+            font-size: 0.65rem;
+            line-height: 1.5;
+            word-break: break-word;
         }
 
         #timer-hud {
@@ -42,10 +71,11 @@
             top: 16px;
             padding: 10px 14px;
             border-radius: 12px;
-            border: 2px solid rgba(0, 0, 0, 0.22);
-            background: rgba(168, 210, 240, 0.92);
-            color: #1b1b1b;
-            font-size: 1.1rem;
+            border: 2px solid #4dff88;
+            background: rgba(0, 160, 60, 0.85);
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.8rem;
             font-weight: 700;
             z-index: 12;
         }
@@ -56,10 +86,11 @@
             bottom: 16px;
             padding: 10px 14px;
             border-radius: 12px;
-            border: 2px solid rgba(0, 0, 0, 0.22);
-            background: rgba(240, 237, 168, 0.92);
-            color: #1b1b1b;
-            font-size: 1.1rem;
+            border: 2px solid #4dff88;
+            background: rgba(0, 160, 60, 0.85);
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.8rem;
             font-weight: 700;
             z-index: 12;
         }
@@ -95,10 +126,12 @@
             width: 260px;
             box-sizing: border-box;
             padding: 10px 14px;
-            border: 2px solid rgba(0, 0, 0, 0.22);
-            border-radius: 12px;
-            background: rgba(255, 255, 0, 0.85);
-            color: #1b1b1b;
+            border: 2px solid #4dff88;
+            border-radius: 8px;
+            background: rgba(0, 160, 60, 0.85);
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 0.65rem;
             z-index: 30;
             pointer-events: none;
         }
@@ -118,7 +151,7 @@
 
             #leaderboard {
             border-left: none;
-            border-top: 2px solid rgba(0, 0, 0, 0.12);
+            border-top: 2px solid rgba(255, 255, 255, 0.3);
             }
 
             #game-container {
@@ -254,6 +287,9 @@
             data.slice(0, 10).forEach((entry) => { /*show only the ten highest scores*/
             const scoreDiv = document.createElement('div');
             scoreDiv.className = 'score-entry';
+            if (entry.Names === currentPlayerName && entry.Tutor === currentPlayerTutor) {
+                scoreDiv.classList.add('own-score'); // the player's own row is highlighted green
+            }
             scoreDiv.dataset.player = entry.Names;
             scoreDiv.innerHTML =
             `
@@ -1023,7 +1059,7 @@
             remote.createHealthBar(scene, 0xcc2222); // red like the dummies, so enemies are easy to spot
             remote.netId = other.id;
             remote.net = { x: other.x, y: other.y, aim: 0 }; // the latest position the server told us about
-            remote.label = scene.add.text(other.x, other.y - 70, other.name, { fontSize: "18px", color: "#ffffff" }).setOrigin(0.5).setDepth(3);
+            remote.label = scene.add.text(other.x, other.y - 70, other.name, { fontSize: "18px", color: "#ffffff" }).setOrigin(0.5).setDepth(11);
 
             // When combat code lowers this copy's health, that means the local player hit them, so tell the server to pass the damage on.
             let shownHealth = remote.health;
@@ -1132,8 +1168,9 @@
                 remote.head.setPosition(newX, newY - 12);
                 remote.head.rotation = other.aim + Math.PI; // same as the local head, which is turned a further 90 degrees for looks
                 remote.updateSwordPose(other.aim, other.aim + Phaser.Math.DegToRad(90));
-                remote.label.setPosition(newX, newY - 70);
                 remote.updateHealthBar();
+                // just below the health bar (which ends 10px above the sprite top), so the bar never covers the name
+                remote.label.setPosition(newX, remote.body.y - remote.body.displayHeight / 2 + 2);
             });
 
             Object.keys(remotePlayers).forEach((id) => {
@@ -1157,6 +1194,7 @@
 
         // Combat messages from the other players. The scene may not exist yet when the first ones arrive, so they are ignored until it does.
         if (window.socket) {
+            window.socket.on("gameOver", () => { window.location.href = "endscreen.html"; });
             window.socket.on("bulletSpawn", (d) => {
                 if (!scene || !scene.sys || remoteBullets[d.id]) {
                     return;
@@ -1383,7 +1421,7 @@
             key: 'phaserwalkleftanim', // the name that itll be referred to later in code, whewn it needs to run
             frames: this.anims.generateFrameNumbers('walkingleftsspritesheet', { // the sprite sheet that i made
                 start: 0, /// first frame of the walking left animation
-                end: 3 // last frame of the walking left animation
+                end: 23 // last frame 
             }),
             frameRate: 10, // frames per second for the walking left animation
             repeat: -1 // this will never end, keeps looping the walking left animation. 
@@ -1391,8 +1429,8 @@
         this.anims.create({ // same applies to this block of code, only the names have changed.
             key: 'phaserwalkrightanim',
             frames: this.anims.generateFrameNumbers('walkingrightspritesheet', {
-                start: 4, 
-                end: 7
+                start: 0,
+                end: 23 // 4 columns x 6 rows = 24 frames
             }),
             frameRate: 10,
             repeat: -1
@@ -1401,7 +1439,7 @@
             key: 'bulletexplosionanim',
             frames: this.anims.generateFrameNumbers('explosionSpriteSheet', {
                 start: 0,
-                end: 29
+                end: 29 // 5 columns x 6 rows = 30 frames
             }),
             frameRate: 20, // frames per second for the explosion animation
             repeat: 0 // play the explosion animation only once
@@ -1704,6 +1742,7 @@
                                                 upgradeCardTimeout = null; // mark that there is no longer an active card timer
                                         }
                     upgradeRound += 1; // rotate the available choices for the next upgrade phase
+          if (checkGameOver()) { return; }
           resetTimerState(scene.time.now); // restart the gameplay timer and unpause the game
         });
       }
@@ -1713,10 +1752,22 @@
                         shownCards.forEach((card) => card.destroy()); // remove the cards when the choice period ends
                         upgradeCardTimeout = null; // clear the completed timeout reference
                         upgradeRound += 1; // rotate the choices even when no card was selected
+                        if (checkGameOver()) { return; }
                         resetTimerState(scene.time.now); // continue the game without applying an upgrade
                 }, 10000);
     }
 
+
+    const TOTAL_UPGRADE_ROUNDS = 5;
+
+    function checkGameOver() { // after the last upgrade round, tell everyone to go to the endscreen
+        if (upgradeRound < TOTAL_UPGRADE_ROUNDS) {
+            return false;
+        }
+        sendToServer('gameOver', {});
+        window.location.href = 'endscreen.html';
+        return true;
+    }
 
     function updateHorizontalMovementAnimation() {
             if (!player || !player.physicsBody || !player.body.anims) {
