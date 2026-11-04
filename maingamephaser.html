@@ -168,7 +168,7 @@
     <body>
         <main id="game-shell">
         <div id="game-container"></div>
-        <div id="timer-hud">Time: <span id="timer-value">10</span>s</div>
+        <div id="timer-hud">Time: <span id="timer-value">60</span>s</div>
         <div id="player-score-hud">Score: <span id="player-score-value">0</span></div>
         <div id="respawn-hud" style="display: none;">Respawning in <span id="respawn-value">3</span></div>
         <div id="local-player-score" style="display: none;"></div>
@@ -1016,7 +1016,7 @@
         let score = 0;
         let timer = 0;
         let timeStart = 0;
-        let timeSet = 10; // seconds between upgrade card phases
+        let timeSet = 60; // seconds between upgrade card phases
         let paused = false;
         let showedCards = false;
         let upgradeCardTimeout = null; // stores the automatic ten-second card timer so it can be cancelled if a card is chosen
