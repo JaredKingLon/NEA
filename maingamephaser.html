@@ -168,7 +168,7 @@
     <body>
         <main id="game-shell">
         <div id="game-container"></div>
-        <div id="timer-hud">Time: <span id="timer-value">60</span>s</div>
+        <div id="timer-hud">Time: <span id="timer-value">20</span>s</div>
         <div id="player-score-hud">Score: <span id="player-score-value">0</span></div>
         <div id="respawn-hud" style="display: none;">Respawning in <span id="respawn-value">3</span></div>
         <div id="local-player-score" style="display: none;"></div>
@@ -1016,7 +1016,7 @@
         let score = 0;
         let timer = 0;
         let timeStart = 0;
-        let timeSet = 60; // seconds between upgrade card phases
+        let timeSet = 20; // seconds between upgrade card phases
         let paused = false;
         let showedCards = false;
         let upgradeCardTimeout = null; // stores the automatic ten-second card timer so it can be cancelled if a card is chosen
@@ -1051,11 +1051,15 @@
             head.setScale(0.2, 0.375);
             head.setDepth(2);
 
-            const sword = scene.add.image(other.x, other.y, "swordpng");
-            sword.setScale(2);
-            sword.setDepth(2);
-
-            const remote = new SwordBot(other.name, 100, 0, body, sword, head, 25);
+            let remote;
+            if (other.botType === "gun") {
+                remote = new BulletBot(other.name, 100, 0, body, head, 250, 5, false, 25);
+            } else {
+                const sword = scene.add.image(other.x, other.y, "swordpng");
+                sword.setScale(2);
+                sword.setDepth(2);
+                remote = new SwordBot(other.name, 100, 0, body, sword, head, 25);
+            }
             remote.createHealthBar(scene, 0xcc2222); // red like the dummies, so enemies are easy to spot
             remote.netId = other.id;
             remote.net = { x: other.x, y: other.y, aim: 0 }; // the latest position the server told us about
@@ -1084,7 +1088,9 @@
         function destroyRemotePlayer(id) {
             const remote = remotePlayers[id];
             remote.colliders.forEach((collider) => collider.destroy());
-            [remote.body, remote.sword, remote.head, remote.label, remote.healthBar].forEach((part) => part.destroy());
+            [remote.body, remote.sword, remote.head, remote.label, remote.healthBar]
+                .filter(Boolean)
+                .forEach((part) => part.destroy());
             delete remotePlayers[id];
 
             // their bullets and bombs go with them
@@ -1167,7 +1173,9 @@
                 animateRemotePlayer(remote, isMoving, distanceX < 0);
                 remote.head.setPosition(newX, newY - 12);
                 remote.head.rotation = other.aim + Math.PI; // same as the local head, which is turned a further 90 degrees for looks
-                remote.updateSwordPose(other.aim, other.aim + Phaser.Math.DegToRad(90));
+                if (remote instanceof SwordBot) {
+                    remote.updateSwordPose(other.aim, other.aim + Phaser.Math.DegToRad(90));
+                }
                 remote.updateHealthBar();
                 // just below the health bar (which ends 10px above the sprite top), so the bar never covers the name
                 remote.label.setPosition(newX, remote.body.y - remote.body.displayHeight / 2 + 2);
@@ -1279,7 +1287,8 @@
                 x: playabody.x,
                 y: playabody.y,
                 aim: localAimAngle,
-                hold: player.swordHoldDistance,
+                hold: player.swordHoldDistance || 80,
+                botType: player instanceof BulletBot ? "gun" : "sword",
                 health: player.health,
                 maxHealth: player.maxHealth,
                 dead: player.isDead,
@@ -1488,7 +1497,12 @@
 
         /*getting the player name from element*/
         const savedPlayerName = localStorage.getItem('playerName') 
-        player = new SwordBot(savedPlayerName, 100, 250, playabody, swordSprite, topHead, 25);
+        if (Phaser.Math.Between(0, 1) === 0) {
+            player = new BulletBot(savedPlayerName, 100, 250, playabody, topHead, 250, 5, false, 25);
+            swordSprite.setVisible(false);
+        } else {
+            player = new SwordBot(savedPlayerName, 100, 250, playabody, swordSprite, topHead, 25);
+        }
         player.createHealthBar(this, 0x22cc55);
 
         /*target practice dummies, stand still and auto-aim/shoot at the player*/

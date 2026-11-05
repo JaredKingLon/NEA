@@ -40,7 +40,8 @@ io.on('connection', (socket) => {
         // Not announced to the others until the first position arrives, otherwise they would see this player at 0,0 first.
         players[socket.id] = {
             id: socket.id, name, tutor, ready: false,
-            x: 0, y: 0, aim: 0, hold: 80, health: 100, maxHealth: 100, dead: false, invincible: false
+            x: 0, y: 0, aim: 0, hold: 80, health: 100, maxHealth: 100, dead: false, invincible: false,
+            botType: 'sword'
         };
         const readyPlayers = {};
         Object.values(players).forEach((other) => {
@@ -66,6 +67,9 @@ io.on('connection', (socket) => {
         player.health = cleanNumber(data.health, 0, 10000, player.maxHealth);
         player.dead = data.dead === true;
         player.invincible = data.invincible === true;
+        if (data.botType === 'gun' || data.botType === 'sword') {
+            player.botType = data.botType;
+        }
 
         if (!player.ready) { // the first position, now everyone else can be told about this player
             player.ready = true;
